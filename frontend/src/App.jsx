@@ -40,7 +40,7 @@ function App() {
 
       <UploadCard setDatasetInfo={setDatasetInfo} />
 
-      <AIInsightCard />
+      <AIInsightCard datasetInfo={datasetInfo}/>
 
       <ChartsSection />
     </div>
