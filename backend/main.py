@@ -42,7 +42,12 @@ async def upload_csv(file: UploadFile = File(...)):
     missing_values = (
         df.isnull().sum().to_dict()
     )
-
+    generated_charts = []
+    if numerical_columns:
+        fig = px.histogram(df, x=numerical_columns[0],title=f"Distribution of {numerical_columns[0]}")
+        chart_path = f"charts/{numerical_columns[0]}.html"
+        fig.write_html(chart_path)
+        generated_charts.append(chart_path)
     return {
         "filename": file.filename,
         "rows": df.shape[0],
@@ -50,5 +55,6 @@ async def upload_csv(file: UploadFile = File(...)):
         "column_names": list(df.columns),
         "numerical_columns": numerical_columns,
         "categorical_columns": categorical_columns,
-        "missing_values": missing_values
+        "missing_values": missing_values,
+        "charts": generated_charts
     }
