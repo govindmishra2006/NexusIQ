@@ -1,50 +1,50 @@
-import Navbar from "./components/Navbar"
-import Hero from "./components/Hero"
-import KpiCard from "./components/KpiCard"
-import UploadCard from "./components/UploadCard"
-import AIInsightCard from "./components/AIInsight"
-import ChartsSection from "./components/ChartsSection"
+import Navbar from "./components/Navbar";
+import Hero from "./components/Hero";
+import KpiCard from "./components/KpiCard";
+import UploadCard from "./components/UploadCard";
+import AIInsightCard from "./components/AIInsight";
+import ChartsSection from "./components/ChartsSection";
+import { useState } from "react";
 
 function App() {
-    return (
-        <div className="min-h-screen bg-black px-10">
+  const [datasetInfo, setDatasetInfo] = useState({
+    rows: 0,
 
-            <Navbar />
+    columns: 0,
 
-            <Hero />
+    numerical_columns: [],
 
-            <div className="grid grid-cols-4 gap-6">
+    categorical_columns: [],
+  });
+  return (
+    <div className="min-h-screen bg-black px-10">
+      <Navbar />
 
-                <KpiCard
-                    title="Revenue"
-                    value="+12%"
-                />
+      <Hero />
 
-                <KpiCard
-                    title="Profit"
-                    value="+8%"
-                />
+      <div className="grid grid-cols-4 gap-6">
+        <KpiCard title="Rows" value={datasetInfo.rows} />
 
-                <KpiCard
-                    title="Retention"
-                    value="-4%"
-                />
+        <KpiCard title="Columns" value={datasetInfo.columns} />
 
-                <KpiCard
-                    title="AI Status"
-                    value="Ready"
-                />
+        <KpiCard
+          title="Numerical"
+          value={datasetInfo.numerical_columns.length}
+        />
 
-            </div>
+        <KpiCard
+          title="Categorical"
+          value={datasetInfo.categorical_columns.length}
+        />
+      </div>
 
-            <UploadCard />
+      <UploadCard setDatasetInfo={setDatasetInfo} />
 
-            <AIInsightCard />
+      <AIInsightCard />
 
-            <ChartsSection />
-
-        </div>
-    )
+      <ChartsSection />
+    </div>
+  );
 }
 
-export default App
+export default App;

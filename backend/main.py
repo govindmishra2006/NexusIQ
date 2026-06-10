@@ -1,8 +1,24 @@
 from fastapi import FastAPI, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import plotly.express as px
 import os
 app = FastAPI()
+app.add_middleware(
+
+    CORSMiddleware,
+
+    allow_origins=[
+        "http://localhost:5173"
+    ],
+
+    allow_credentials=True,
+
+    allow_methods=["*"],
+
+    allow_headers=["*"]
+
+)
 os.makedirs("charts", exist_ok=True)
 @app.get("/")
 def home():
@@ -12,6 +28,7 @@ def home():
 
 @app.post("/upload")
 async def upload_csv(file: UploadFile = File(...)):
+
     df = pd.read_csv(file.file)
 
     numerical_columns = list(
@@ -22,12 +39,10 @@ async def upload_csv(file: UploadFile = File(...)):
         df.select_dtypes(exclude=["number"]).columns
     )
 
-    generated_charts = []
-    if numerical_columns:
-        fig = px.histogram(df,x=numerical_columns[0],title=f"Distribution of {numerical_columns[0]}")
-        chart_path = f"charts/{numerical_columns[0]}.html"
-        fig.write_html(chart_path)
-        generated_charts.append(chart_path)
+    missing_values = (
+        df.isnull().sum().to_dict()
+    )
+
     return {
         "filename": file.filename,
         "rows": df.shape[0],
@@ -35,5 +50,5 @@ async def upload_csv(file: UploadFile = File(...)):
         "column_names": list(df.columns),
         "numerical_columns": numerical_columns,
         "categorical_columns": categorical_columns,
-        "charts": generated_charts
-    } 
+        "missing_values": missing_values
+    }
