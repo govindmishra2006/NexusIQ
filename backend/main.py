@@ -7,11 +7,11 @@ import os
 from dotenv import load_dotenv
 import google.generativeai as genai
 
-# Load secret environment variables
+
 load_dotenv()
 
-# Initialize the AI Brain
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+
 model = genai.GenerativeModel('gemini-2.5-flash')
 
 app = FastAPI()
@@ -26,7 +26,7 @@ app.add_middleware(
 
 os.makedirs("charts", exist_ok=True)
 
-# Define the strict structure for incoming AI requests
+
 class DatasetInfo(BaseModel):
     rows: int
     columns: int
@@ -39,13 +39,24 @@ def home():
 
 @app.post("/upload")
 async def upload_csv(file: UploadFile = File(...)):
-    df = pd.read_csv(file.file)
-    chart_data = []
 
+    df = pd.read_csv(file.file)
+
+    df = df.drop_duplicates()
+    
     numerical_columns = list(df.select_dtypes(include=["number"]).columns)
     categorical_columns = list(df.select_dtypes(exclude=["number"]).columns)
+
+    for col in numerical_columns:
+        if df[col].isnull().any():
+            df[col] = df[col].fillna(df[col].median())
+
+    for col in categorical_columns:
+        if df[col].isnull().any():
+            df[col] = df[col].fillna("Unknown")
+
     missing_values = df.isnull().sum().to_dict()
-    
+    chart_data = []
     generated_charts = []
     
     if numerical_columns:
@@ -53,11 +64,10 @@ async def upload_csv(file: UploadFile = File(...)):
         value_counts = df[first_column].value_counts().sort_index()
         for index, value in value_counts.items():
             chart_data.append({
-                "name": index,
-                "count": value
+                "name": str(index),
+                "count": int(value)
             })
         
-        # Note: Plotly Express requires valid DataFrame operations
         fig = px.histogram(df, x=first_column, title=f"Distribution of {first_column}")
         chart_path = f"charts/{first_column}.html"
         fig.write_html(chart_path)
@@ -70,7 +80,7 @@ async def upload_csv(file: UploadFile = File(...)):
         "column_names": list(df.columns),
         "numerical_columns": numerical_columns,
         "categorical_columns": categorical_columns,
-        "missing_values": missing_values,
+        "missing_values": missing_values, # Confirms to frontend that data is clean
         "charts": generated_charts,
         "chart_data": chart_data
     }
