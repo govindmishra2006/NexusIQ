@@ -1,34 +1,14 @@
-import Navbar from "./components/Navbar";
-import Hero from "./components/Hero";
-import KpiCard from "./components/KpiCard";
-import UploadCard from "./components/UploadCard";
-import AIInsightCard from "./components/AIInsight";
-import ChartsSection from "./components/ChartsSection";
-import RevenueChart from "./components/RevenueChart";
 import { useState } from "react";
 
+import Navbar from "./components/Navbar";
+import KpiCard from "./components/KpiCard";
+import UploadCard from "./components/UploadCard";
+import RevenueChart from "./components/RevenueChart";
+import ProductPieChart from "./components/ProductPieChart";
+import AIInsight from "./components/AIInsight";
+import Footer from "./components/Footer";
+
 function App() {
-  const chartData = [
-    {
-      name: "100",
-      value: 1,
-    },
-
-    {
-      name: "150",
-      value: 1,
-    },
-
-    {
-      name: "200",
-      value: 1,
-    },
-
-    {
-      name: "300",
-      value: 1,
-    },
-  ];
   const [datasetInfo, setDatasetInfo] = useState({
     rows: 0,
 
@@ -37,35 +17,58 @@ function App() {
     numerical_columns: [],
 
     categorical_columns: [],
+
+    chart_data: [],
   });
+
+  const pieData = [
+    {
+      name: "Laptop",
+      value: 3,
+    },
+
+    {
+      name: "Phone",
+      value: 2,
+    },
+
+    {
+      name: "Tablet",
+      value: 1,
+    },
+  ];
+
   return (
-    <div className="min-h-screen bg-black px-10">
-      <Navbar />
+    <div className="min-h-screen bg-slate-950 text-white">
+      <div className="max-w-7xl mx-auto px-6 py-8">
+        <Navbar />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-10 w-full">
+          <KpiCard title="Rows" value={datasetInfo.rows} delay={0.1} />
+          <KpiCard title="Columns" value={datasetInfo.columns} delay={0.2} />
+          <KpiCard
+            title="Numerical"
+            value={datasetInfo.numerical_columns.length}
+            delay={0.3}
+          />
+          <KpiCard
+            title="Categorical"
+            value={datasetInfo.categorical_columns.length}
+            delay={0.4}
+          />
+        </div>
+        <div className="mt-8">
+          <UploadCard setDatasetInfo={setDatasetInfo} />
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
+          <RevenueChart data={datasetInfo.chart_data} />
 
-      <Hero />
-
-      <div className="grid grid-cols-4 gap-6">
-        <KpiCard title="Rows" value={datasetInfo.rows} />
-
-        <KpiCard title="Columns" value={datasetInfo.columns} />
-
-        <KpiCard
-          title="Numerical"
-          value={datasetInfo.numerical_columns.length}
-        />
-
-        <KpiCard
-          title="Categorical"
-          value={datasetInfo.categorical_columns.length}
-        />
+          <ProductPieChart data={pieData} />
+        </div>
+        <div className="mt-8">
+          <AIInsight datasetInfo={datasetInfo} />
+        </div>
+        <Footer />
       </div>
-
-      <UploadCard setDatasetInfo={setDatasetInfo} />
-
-      <AIInsightCard datasetInfo={datasetInfo} />
-      <RevenueChart data={chartData} />
-
-      <ChartsSection />
     </div>
   );
 }

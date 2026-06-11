@@ -30,6 +30,7 @@ def home():
 async def upload_csv(file: UploadFile = File(...)):
 
     df = pd.read_csv(file.file)
+    chart_data = []
 
     numerical_columns = list(
         df.select_dtypes(include=["number"]).columns
@@ -44,6 +45,13 @@ async def upload_csv(file: UploadFile = File(...)):
     )
     generated_charts = []
     if numerical_columns:
+        first_column = numerical_columns[0]
+        value_counts = df[first_column].value_counts().sort_index()
+        for index, value in value_counts.items():
+            chart_data.append({
+                "name": index,
+                "count": value
+            })
         fig = px.histogram(df, x=numerical_columns[0],title=f"Distribution of {numerical_columns[0]}")
         chart_path = f"charts/{numerical_columns[0]}.html"
         fig.write_html(chart_path)
@@ -56,5 +64,6 @@ async def upload_csv(file: UploadFile = File(...)):
         "numerical_columns": numerical_columns,
         "categorical_columns": categorical_columns,
         "missing_values": missing_values,
-        "charts": generated_charts
+        "charts": generated_charts,
+        "chart_data": chart_data
     }
