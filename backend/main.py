@@ -4,6 +4,7 @@ from pydantic import BaseModel
 import pandas as pd
 import plotly.express as px
 import os
+import json
 from dotenv import load_dotenv
 import google.generativeai as genai
 
@@ -86,22 +87,22 @@ async def upload_csv(file: UploadFile = File(...)):
     }
 
 @app.post("/generate-insight")
-async def generate_insight(info: DatasetInfo):
+async def generate_insight(info : DatasetInfo):
     prompt = f"""
-    You are the AI Business Analyst for a premium SaaS platform called NexusIQ.
-    The user has just uploaded a dataset with the following properties:
+    You are the AI Business Analyst for NexusIQ.
+    The user uploaded a dataset:
     - Rows: {info.rows}
     - Columns: {info.columns}
-    - Numerical Features: {', '.join(info.numerical_columns)}
-    - Categorical Features: {', '.join(info.categorical_columns)}
+    - Numerical: {', '.join(info.numerical_columns)}
+    - Categorical: {', '.join(info.categorical_columns)}
 
-    Write a sharp, 3-sentence executive summary detailing what kind of business intelligence 
-    and root cause analysis we can perform with this specific data. 
-    Be confident, professional, and do not use markdown formatting.
-    """
-    
+    Return ONLY a raw JSON object. Do not use markdown blocks (```json).
+    The JSON must have exactly two keys:
+    1. "summary": A sharp, 3-sentence executive summary.
+    2. "chart": An object with "type" (either "bar" or "pie"), "x_axis" (choose one categorical column), and "y_axis" (choose one numerical column)."""
     try:
-        response = model.generate_content(prompt)
-        return {"insight": response.text}
+        response = model.generate_content(prompt,generation_config ={"response_mime_type":"application/json"})
+        ai_data = json.loads(response.text)
+        return ai_data
     except Exception as e:
-        return {"insight": f"AI Engine temporarily offline. Error: {str(e)}"}
+        return {"summary": f"AI Engine offline. Error: {str(e)}", "chart": None}
