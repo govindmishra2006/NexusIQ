@@ -1,4 +1,6 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Security
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from supabase import create_client, Client
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import pandas as pd
@@ -7,13 +9,36 @@ import os
 import json
 from dotenv import load_dotenv
 import google.generativeai as genai
-from fastapi import HTTPException
 
-
+# ==========================================
+# 1. ENVIRONMENT & SECURITY SETUP
+# ==========================================
 load_dotenv()
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+# Using the Service Key to safely bypass Row Level Security for backend fetches
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 
+if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+    raise RuntimeError("🚨 Supabase environment variables are missing")
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+security = HTTPBearer()
+
+# THE GATEKEEPER: Verifies the JWT Token from React
+def get_current_user(credentials: HTTPAuthorizationCredentials = Security(security)):
+    token = credentials.credentials
+    try:
+        user_response = supabase.auth.get_user(token)
+        if not user_response.user:
+            raise HTTPException(status_code=401, detail="Invalid or Expired Token")
+        return user_response.user
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Authentication Failed: {str(e)}")
+
+# ==========================================
+# 2. AI & APP INITIALIZATION
+# ==========================================
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-
 model = genai.GenerativeModel('gemini-2.5-flash')
 
 app = FastAPI()
@@ -28,8 +53,11 @@ app.add_middleware(
 
 os.makedirs("charts", exist_ok=True)
 
-
+# ==========================================
+# 3. DATA MODELS
+# ==========================================
 class DatasetInfo(BaseModel):
+    filename: str  # Required so the frontend doesn't crash the Pydantic check
     rows: int
     columns: int
     numerical_columns: list
@@ -40,43 +68,45 @@ class DatasetInfo(BaseModel):
     anomaly_count: int = 0
     top_anomalous_skus: list = []
 
+# ==========================================
+# 4. API ROUTES
+# ==========================================
 @app.get("/")
 def home():
     return {"message": "Welcome to NexusIQ"}
 
 @app.post("/upload")
 async def upload_csv(file: UploadFile = File(...)):
-
+    # --- MATH ENGINE ---
     df = pd.read_csv(file.file)
-    required_columns = ["Order ID","Lineitem SKU","Total","Financial Status","Created at"]
+    required_columns = ["Order ID", "Lineitem SKU", "Total", "Financial Status", "Created at"]
 
     missing_cols = [col for col in required_columns if col not in df.columns]
 
     if missing_cols:
         raise HTTPException(
-            status_code = 400,
-            detail = f"Invalid E-commerce schema. Missing required columns: {', '.join(missing_cols)}. Please upload a standard shopify Orders export"
+            status_code=400,
+            detail=f"Invalid E-commerce schema. Missing required columns: {', '.join(missing_cols)}. Please upload a standard shopify Orders export"
         )
 
     df = df.drop_duplicates()
-
-    df["Total"] = pd.to_numeric(df["Total"],errors="coerce")
+    df["Total"] = pd.to_numeric(df["Total"], errors="coerce")
     df = df.dropna(subset=["Total"])
 
     q1 = df["Total"].quantile(0.25)
     q3 = df["Total"].quantile(0.75)
-    iqr = q3-q1
+    iqr = q3 - q1
 
-    lower_fence = q1-(1.5*iqr)
-    upper_fence = q3+(1.5*iqr)
+    lower_fence = q1 - (1.5 * iqr)
+    upper_fence = q3 + (1.5 * iqr)
 
     anomalies_df = df[(df["Total"] < lower_fence) | (df["Total"] > upper_fence)]
     anomaly_count = len(anomalies_df)
     top_anomalous_skus = []
+    
     if anomaly_count > 0:
         top_anomalous_skus = anomalies_df["Lineitem SKU"].value_counts().head(5).index.tolist()
         print(f"⚙️ Math Engine: Detected {anomaly_count} revenue anomalies. Top suspect SKUs: {top_anomalous_skus}")
-
 
     total_revenue = df["Total"].sum()
     order_count = int(df["Total"].count())
@@ -118,7 +148,7 @@ async def upload_csv(file: UploadFile = File(...)):
         "column_names": list(df.columns),
         "numerical_columns": numerical_columns,
         "categorical_columns": categorical_columns,
-        "missing_values": missing_values, # Confirms to frontend that data is clean
+        "missing_values": missing_values, 
         "charts": generated_charts,
         "chart_data": chart_data,
         "status": "success",
@@ -136,29 +166,101 @@ async def upload_csv(file: UploadFile = File(...)):
         }
     }
 
+# --- THE CONTEXTUAL AI BRIDGE & DELTA ENGINE ---
 @app.post("/generate-insight")
-async def generate_insight(info : DatasetInfo):
-    anomalous_skus_str = ', '.join(info.top_anomalous_skus) if info.top_anomalous_skus else "None detected"
-    prompt =f"""You are an elite, Tier-1 E-Commerce Data Consultant for a Shopify merchant.
+async def generate_insight(info: DatasetInfo, current_user = Depends(get_current_user)):
     
-    Here is the exact, mathematically proven profile of their recent sales data. Do not hallucinate numbers outside of these facts:
-    - Total Revenue: ${info.total_revenue}
-    - Total Orders: {info.order_count}
-    - Average Order Value (AOV): ${info.avg_order_value}
+    # 1. Fetch the user's Store DNA
+    try:
+        db_response = supabase.table("store_settings").select("dna").eq("user_id", current_user.id).execute()
+        dna = db_response.data[0]['dna'] if db_response.data else {}
+        store_name = dna.get('storeName', 'this Shopify store')
+        target_aov = dna.get('targetAov', 'Not defined')
+        target_rev = dna.get('targetRevenue', 'Not defined')
+    except Exception as e:
+        store_name = "this Shopify store"
+        target_aov = "Not defined"
+        target_rev = "Not defined"
+
+    # 2. THE DELTA ENGINE: Fetch the previous upload to compare
+    deltas = None
+    try:
+        # Grab the single most recent archive before the current one saves
+        archive_response = supabase.table("brief_archives") \
+            .select("dashboard_data") \
+            .eq("user_id", current_user.id) \
+            .order("created_at", desc=True) \
+            .limit(1) \
+            .execute()
+        
+        if archive_response.data:
+            prev_metrics = archive_response.data[0]['dashboard_data'].get('metrics', {})
+            
+            # Safe math function to prevent division by zero crashes
+            def calc_delta(new_val, old_val):
+                if not old_val or old_val == 0: return 0.0
+                return round(((new_val - old_val) / old_val) * 100, 1)
+
+            deltas = {
+                "revenue": calc_delta(info.total_revenue, prev_metrics.get("total_revenue", 0)),
+                "orders": calc_delta(info.order_count, prev_metrics.get("order_count", 0)),
+                "aov": calc_delta(info.avg_order_value, prev_metrics.get("avg_order_value", 0))
+            }
+            print(f"📈 DELTAS CALCULATED: {deltas}")
+    except Exception as e:
+        print(f"⚠️ Delta Engine bypassed (No previous history found): {e}")
+
+    # 3. Prepare Scalable Data Payload
+    clean_metrics = info.model_dump(exclude={"numerical_columns", "categorical_columns", "top_anomalous_skus", "filename"})
+    anomalous_skus_str = ', '.join(info.top_anomalous_skus) if info.top_anomalous_skus else "None detected"
+    
+    # 4. Contextual Prompt Generation
+    delta_context = ""
+    if deltas:
+        delta_context = f"""
+        HISTORICAL DELTAS (Compared to their last upload):
+        - Revenue: {deltas['revenue']}%
+        - Orders: {deltas['orders']}%
+        - AOV: {deltas['aov']}%
+        
+        CRITICAL: Your 'summary' MUST open with a comparative statement about these deltas (e.g., 'Revenue is up 12% from your last upload...').
+        """
+
+    prompt = f"""You are an elite, Tier-1 E-Commerce Data Consultant for {store_name}.
+    
+    The CEO's business goals are:
+    - Target Average Order Value (AOV): ${target_aov}
+    - Target Monthly Revenue: ${target_rev}
+    
+    Here is the mathematically proven profile of their recent sales data:
+    {clean_metrics}
+    
+    {delta_context}
     
     CRITICAL ANOMALIES DETECTED:
     We mathematically detected {info.anomaly_count} orders that fall wildly outside their normal sales variance. 
     The product SKUs most responsible for these anomalies are: {anomalous_skus_str}.
     
-    Your task is to return a strict JSON object with exactly three keys that will be displayed directly to the CEO:
-    1. "summary": A sharp, 2-sentence executive summary of their revenue and AOV.
+    Your task is to return a strict JSON object with exactly three keys:
+    1. "summary": A sharp, 2-sentence executive summary of their revenue, AOV, and goals.
     2. "root_causes": A list of 2 string sentences explaining why those specific anomalous SKUs might be causing spikes or drops.
-    3. "recommendations": A list of 2 actionable, e-commerce specific steps the CEO should take immediately regarding those SKUs.
+    3. "recommendations": A list of 2 actionable, e-commerce specific steps the CEO should take immediately.
     
     Return ONLY valid JSON."""
+    
+    # 5. Call Gemini & Inject Deltas for the Frontend
     try:
-        response = model.generate_content(prompt,generation_config ={"response_mime_type":"application/json"})
+        response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
         ai_data = json.loads(response.text)
+        
+        # We attach the Python-calculated deltas to the JSON so React can render the UI badges
+        if deltas:
+            ai_data["deltas"] = deltas 
+            
         return ai_data
     except Exception as e:
-        return {"summary": f"AI Engine offline. Error: {str(e)}", "chart": None}
+        return {
+            "summary": f"AI Engine offline. Error: {str(e)}", 
+            "root_causes": ["System error prevented AI analysis."], 
+            "recommendations": ["Check backend server logs."]
+        }
