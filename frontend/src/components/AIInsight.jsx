@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import axios from "axios";
-
+import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, BarChart, XAxis, YAxis, Bar } from "recharts";
 function AIInsight({ datasetInfo }) {
   const [aiData, setAiData] = useState(null);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -76,32 +76,79 @@ function AIInsight({ datasetInfo }) {
                   {aiData.summary}
                 </p>
                 {aiData.chart && (
-                  <div className="mt-5 p-4 bg-slate-800/80 rounded-xl border border-slate-600/50 flex items-center justify-between">
-                    <div>
-                      <p className="text-xs text-emerald-400 font-bold uppercase tracking-wider mb-1">
-                        📊 AI Visualization Blueprint
-                      </p>
-                      <p className="text-gray-300 text-sm">
-                        Type:{" "}
-                        <span className="text-white font-semibold capitalize">
-                          {aiData.chart.type} Chart
-                        </span>
-                      </p>
+                  <div className="mt-8 pt-6 border-t border-slate-700/50">
+                    <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
+                      📊 AI Recommended Visualization
+                    </h3>
+
+                    <div className="bg-slate-900/50 rounded-xl p-6 border border-slate-700/50 h-[300px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        {aiData.chart.type === "pie" ? (
+                          <PieChart>
+                            <Pie
+                              data={datasetInfo.chart_data}
+                              dataKey="count"
+                              nameKey="name"
+                              cx="50%"
+                              cy="50%"
+                              outerRadius={100}
+                            >
+                              {datasetInfo.chart_data.map((entry, index) => (
+                                <Cell
+                                  key={`cell-${index}`}
+                                  fill={
+                                    [
+                                      "#3b82f6",
+                                      "#8b5cf6",
+                                      "#10b981",
+                                      "#f59e0b",
+                                    ][index % 4]
+                                  }
+                                />
+                              ))}
+                            </Pie>
+                            <Tooltip
+                              contentStyle={{
+                                backgroundColor: "#1e293b",
+                                border: "none",
+                                borderRadius: "8px",
+                                color: "#fff",
+                              }}
+                            />
+                          </PieChart>
+                        ) : (
+                          <BarChart data={datasetInfo.chart_data}>
+                            <XAxis dataKey="name" stroke="#9ca3af" />
+                            <YAxis stroke="#9ca3af" />
+                            <Tooltip
+                              contentStyle={{
+                                backgroundColor: "#1e293b",
+                                border: "none",
+                                borderRadius: "8px",
+                                color: "#fff",
+                              }}
+                            />
+                            <Bar
+                              dataKey="count"
+                              fill="#8b5cf6"
+                              radius={[6, 6, 0, 0]}
+                            />
+                          </BarChart>
+                        )}
+                      </ResponsiveContainer>
                     </div>
-                    <div className="text-right text-sm text-gray-400">
-                      <p>
-                        X:{" "}
-                        <span className="text-white">
-                          {aiData.chart.x_axis}
-                        </span>
-                      </p>
-                      <p>
-                        Y:{" "}
-                        <span className="text-white">
-                          {aiData.chart.y_axis}
-                        </span>
-                      </p>
-                    </div>
+
+                    <p className="text-sm text-gray-400 mt-4 text-center">
+                      AI generated a {aiData.chart.type} chart mapping{" "}
+                      <span className="text-emerald-400 font-medium">
+                        {aiData.chart.x_axis}
+                      </span>{" "}
+                      against{" "}
+                      <span className="text-emerald-400 font-medium">
+                        {aiData.chart.y_axis}
+                      </span>
+                      .
+                    </p>
                   </div>
                 )}
               </motion.div>
