@@ -20,10 +20,10 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
 )
 
 os.makedirs("charts", exist_ok=True)
@@ -139,7 +139,7 @@ async def upload_csv(file: UploadFile = File(...)):
 @app.post("/generate-insight")
 async def generate_insight(info : DatasetInfo):
     anomalous_skus_str = ', '.join(info.top_anomalous_skus) if info.top_anomalous_skus else "None detected"
-    prompt ="""You are an elite, Tier-1 E-Commerce Data Consultant for a Shopify merchant.
+    prompt =f"""You are an elite, Tier-1 E-Commerce Data Consultant for a Shopify merchant.
     
     Here is the exact, mathematically proven profile of their recent sales data. Do not hallucinate numbers outside of these facts:
     - Total Revenue: ${info.total_revenue}
