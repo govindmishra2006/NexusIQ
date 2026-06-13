@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Security
+from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Security, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from supabase import create_client, Client
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +12,15 @@ import google.generativeai as genai
 from fastapi import Response
 from weasyprint import HTML
 from datetime import datetime
+from fastapi.responses import StreamingResponse, RedirectResponse
+import io
+import hmac
+import hashlib
+import httpx
+from security import encrypt_token
+from contextlib import asynccontextmanager
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from ingestion import sync_shopify_orders
 
 # ==========================================
 # 1. ENVIRONMENT & SECURITY SETUP
@@ -39,12 +48,43 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Security(securi
         raise HTTPException(status_code=401, detail=f"Authentication Failed: {str(e)}")
 
 # ==========================================
-# 2. AI & APP INITIALIZATION
+# 2. BACKGROUND SCHEDULER
+# ==========================================
+scheduler = AsyncIOScheduler()
+
+async def run_nightly_syncs():
+    """Fetches all connected stores and runs the ingestion pipeline."""
+    print("🌙 Running nightly Shopify syncs...")
+    
+    # 🚨 THE COROUTINE FIX: Awaiting the Supabase execute()
+    connections = await supabase.table("shopify_connections").select("*").execute()
+    
+    for conn in connections.data:
+        # Trigger the sync for each store
+        await sync_shopify_orders(
+            user_id=conn["user_id"],
+            shop_domain=conn["shop_domain"],
+            encrypted_token=conn["access_token_encrypted"]
+        )
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # This runs when the server starts
+    scheduler.add_job(run_nightly_syncs, 'cron', hour=2, minute=0)
+    scheduler.start()
+    print("⏱️ APScheduler started. Nightly syncs locked in.")
+    yield
+    # This runs when the server shuts down
+    scheduler.shutdown()
+
+# ==========================================
+# 3. AI & APP INITIALIZATION
 # ==========================================
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 model = genai.GenerativeModel('gemini-2.5-flash')
 
-app = FastAPI()
+# Inject the lifespan hook so the scheduler boots with the app
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -57,7 +97,7 @@ app.add_middleware(
 os.makedirs("charts", exist_ok=True)
 
 # ==========================================
-# 3. DATA MODELS
+# 4. DATA MODELS
 # ==========================================
 class DatasetInfo(BaseModel):
     filename: str  # Required so the frontend doesn't crash the Pydantic check
@@ -76,8 +116,11 @@ class PDFExportPayload(BaseModel):
     metrics: dict
     aiBrief: dict
 
+class NarrationPayload(BaseModel):
+    summary_text: str
+
 # ==========================================
-# 4. API ROUTES
+# 5. API ROUTES
 # ==========================================
 @app.get("/")
 def home():
@@ -348,3 +391,91 @@ async def export_pdf(payload: PDFExportPayload, current_user = Depends(get_curre
     pdf_bytes = HTML(string=html_content).write_pdf()
 
     return Response(content=pdf_bytes, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=NexusIQ_Brief_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"})
+
+@app.post("/narrate-brief")
+async def narrate_brief(payload: NarrationPayload, current_user = Depends(get_current_user)):
+    try:
+        client = texttospeech.TextToSpeechClient()
+        synthesis_input = texttospeech.SynthesisInput(text=payload.summary_text)
+        voice = texttospeech.VoiceSelectionParams(language_code = "en-US",name="en-US-Journey-D")
+        
+        audio_config = texttospeech.AudioConfig(audio_encoding = texttospeech.AudioEncoding.MP3,
+                                                speaking_rate = 1.05,
+                                                pitch = 2.0)
+        response = client.synthesize_speech(input = synthesis_input, voice = voice, audio_config = audio_config)
+        
+        return StreamingResponse(io.BytesIO(response.audio_content),media_type = "audio/mpeg")
+    except Exception as e:
+        print(f"TTS Engine error: {e}")
+        return Response(content=f"Audio generation failed: {str(e)}", media_type="text/plain", status_code=500)
+    
+SHOPIFY_CLIENT_ID = os.getenv("SHOPIFY_CLIENT_ID","your_client_id")
+SHOPIFY_CLIENT_SECRET = os.getenv("SHOPIFY_CLIENT_SECRET","your_client_secret")
+APP_URL = "http://localhost:8000"
+SCOPES = "read_orders,read_products,read_inventory"
+
+@app.get("/shopify/install-url")
+async def get_shopify_install_url(shop: str, current_user = Depends(get_current_user)):
+    """
+    The React frontend calls this with the user's JWT token.
+    We return the secure Shopify URL containing their user_id in the 'state'.
+    """
+    redirect_uri = f"{APP_URL}/shopify/callback"
+    
+    state = str(current_user["id"]) if isinstance(current_user, dict) else str(current_user.id)
+    
+    install_url = f"https://{shop}/admin/oauth/authorize?client_id={SHOPIFY_CLIENT_ID}&scope={SCOPES}&redirect_uri={redirect_uri}&state={state}"
+    
+    return {"url": install_url}
+
+@app.get("/shopify/callback")
+async def shopify_callback(request: Request):
+    """Shopify calls this after the merchant clicks 'Approve'."""
+    params = dict(request.query_params)
+    shop = params.get("shop")
+    code = params.get("code")
+    hmac_val = params.pop("hmac", None)
+    
+    user_id = params.get("state") 
+    
+    if not hmac_val or not shop or not code or not user_id:
+        raise HTTPException(status_code=400, detail="Missing parameters. Handshake aborted.")
+
+    sorted_params = "&".join([f"{k}={v}" for k, v in sorted(params.items())])
+    calculated_hmac = hmac.new(
+        SHOPIFY_CLIENT_SECRET.encode('utf-8'),
+        sorted_params.encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest()
+
+    if not hmac.compare_digest(calculated_hmac, hmac_val):
+        raise HTTPException(status_code=403, detail="HMAC verification failed.")
+
+    async with httpx.AsyncClient() as client:
+        token_response = await client.post(
+            f"https://{shop}/admin/oauth/access_token",
+            json={
+                "client_id": SHOPIFY_CLIENT_ID,
+                "client_secret": SHOPIFY_CLIENT_SECRET,
+                "code": code
+            }
+        )
+        
+    token_data = token_response.json()
+    access_token = token_data.get("access_token")
+    
+    if not access_token:
+         raise HTTPException(status_code=500, detail="Failed to retrieve token.")
+         
+    encrypted_token = encrypt_token(access_token)
+    
+    supabase.table("shopify_connections").upsert({
+        "user_id": user_id,
+        "shop_domain": shop,
+        "access_token_encrypted": encrypted_token,
+        "scopes": SCOPES.split(",")
+    }, on_conflict="shop_domain").execute()
+    
+    print(f"🔒 SECURE HANDSHAKE COMPLETE FOR: {shop} (User: {user_id})")
+    
+    return RedirectResponse("http://localhost:5173/dashboard?integration=success")

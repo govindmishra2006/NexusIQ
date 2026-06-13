@@ -10,21 +10,43 @@ interface StoreDna {
 
 // 2. Define what our Global Register holds and what it can DO
 interface DnaState {
+  // --- ORIGINAL DNA STATE ---
   dna: StoreDna;
   loading: boolean;
   fetchDna: () => Promise<void>;
   updateDna: (newDna: Partial<StoreDna>) => Promise<void>;
+
+  // --- NEW INTEGRATION STATE ---
+  isShopifyConnected: boolean;
+  shopDomain: string | null;
+  lastSyncTime: string | null;
+  setShopifyConnection: (
+    isConnected: boolean,
+    domain: string,
+    syncTime: string,
+  ) => void;
 }
 
-// 3. Create the actual hook
+// 3. Create the SINGLE actual hook
 export const useStoreDna = create<DnaState>((set, get) => ({
-  // Initial values (empty state)
+  // ==========================
+  // INITIAL VALUES
+  // ==========================
   dna: {
     storeName: "",
     targetAov: 0,
     targetRevenue: 0,
   },
   loading: false,
+
+  // New integration default values
+  isShopifyConnected: false,
+  shopDomain: null,
+  lastSyncTime: null,
+
+  // ==========================
+  // ACTIONS
+  // ==========================
 
   // Action A: Fetch DNA from Supabase
   fetchDna: async () => {
@@ -79,4 +101,12 @@ export const useStoreDna = create<DnaState>((set, get) => ({
       set({ loading: false });
     }
   },
+
+  // Action C: Update Shopify Connection Status
+  setShopifyConnection: (isConnected, domain, syncTime) =>
+    set({
+      isShopifyConnected: isConnected,
+      shopDomain: domain,
+      lastSyncTime: syncTime,
+    }),
 }));
