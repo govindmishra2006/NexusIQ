@@ -9,6 +9,9 @@ import os
 import json
 from dotenv import load_dotenv
 import google.generativeai as genai
+from fastapi import Response
+from weasyprint import HTML
+from datetime import datetime
 
 # ==========================================
 # 1. ENVIRONMENT & SECURITY SETUP
@@ -67,6 +70,11 @@ class DatasetInfo(BaseModel):
     avg_order_value: float = 0.0
     anomaly_count: int = 0
     top_anomalous_skus: list = []
+
+class PDFExportPayload(BaseModel):
+    filename: str
+    metrics: dict
+    aiBrief: dict
 
 # ==========================================
 # 4. API ROUTES
@@ -264,3 +272,79 @@ async def generate_insight(info: DatasetInfo, current_user = Depends(get_current
             "root_causes": ["System error prevented AI analysis."], 
             "recommendations": ["Check backend server logs."]
         }
+    
+@app.post("/export-pdf")
+async def export_pdf(payload: PDFExportPayload, current_user = Depends(get_current_user)):
+    metrics= payload.metrics
+    brief = payload.aiBrief
+    summary = brief.get("summary","No summary available")
+    root_causes =brief.get("root_causes",[])
+    recommendations = brief.get("recommendations",[])
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            @page {{ margin: 2cm; size: A4 portrait; }}
+            body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #111827; line-height: 1.6; }}
+            .header {{ border-bottom: 2px solid #111827; padding-bottom: 10px; margin-bottom: 30px; }}
+            .title {{ font-size: 24px; font-weight: bold; text-transform: uppercase; letter-spacing: 2px; }}
+            .meta {{ font-size: 12px; color: #6B7280; font-family: monospace; }}
+            
+            .kpi-grid {{ display: flex; width: 100%; margin-bottom: 30px; gap: 20px; }}
+            .kpi-box {{ flex: 1; padding: 15px; border: 1px solid #E5E7EB; background: #F9FAFB; border-radius: 8px; }}
+            .kpi-label {{ font-size: 10px; text-transform: uppercase; color: #6B7280; letter-spacing: 1px; }}
+            .kpi-value {{ font-size: 24px; font-weight: bold; margin-top: 5px; }}
+            
+            h2 {{ font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: #374151; border-bottom: 1px solid #E5E7EB; padding-bottom: 5px; margin-top: 30px; }}
+            p {{ font-size: 14px; }}
+            ul {{ font-size: 14px; padding-left: 20px; }}
+            li {{ margin-bottom: 8px; }}
+            
+            .footer {{ position: fixed; bottom: 0; width: 100%; text-align: center; font-size: 10px; color: #9CA3AF; border-top: 1px solid #E5E7EB; padding-top: 10px; }}
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <div class="title">NexusIQ Executive Brief</div>
+            <div class="meta">Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')} | Source Data: {payload.filename}</div>
+        </div>
+
+        <div class="kpi-grid">
+            <div class="kpi-box">
+                <div class="kpi-label">Total Revenue</div>
+                <div class="kpi-value">${metrics.get('total_revenue', 0):,.2f}</div>
+            </div>
+            <div class="kpi-box">
+                <div class="kpi-label">Total Orders</div>
+                <div class="kpi-value">{metrics.get('order_count', 0):,}</div>
+            </div>
+            <div class="kpi-box">
+                <div class="kpi-label">Avg Order Value</div>
+                <div class="kpi-value">${metrics.get('avg_order_value', 0):,.2f}</div>
+            </div>
+        </div>
+
+        <h2>Executive Summary</h2>
+        <p>{summary}</p>
+
+        <h2>Identified Root Causes</h2>
+        <ul>
+            {''.join(f'<li>{cause}</li>' for cause in root_causes)}
+        </ul>
+
+        <h2>Strategic Action Plan</h2>
+        <ul>
+            {''.join(f'<li>{rec}</li>' for rec in recommendations)}
+        </ul>
+
+        <div class="footer">
+            Confidential & Proprietary · Generated securely via NexusIQ Enterprise
+        </div>
+    </body>
+    </html>
+    """
+    pdf_bytes = HTML(string=html_content).write_pdf()
+
+    return Response(content=pdf_bytes, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=NexusIQ_Brief_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"})
