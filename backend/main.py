@@ -21,6 +21,7 @@ from security import encrypt_token
 from contextlib import asynccontextmanager
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from ingestion import sync_shopify_orders
+from services.forecast import generate_30_day_forecast, cache
 
 # ==========================================
 # 1. ENVIRONMENT & SECURITY SETUP
@@ -479,3 +480,33 @@ async def shopify_callback(request: Request):
     print(f"🔒 SECURE HANDSHAKE COMPLETE FOR: {shop} (User: {user_id})")
     
     return RedirectResponse("http://localhost:5173/dashboard?integration=success")
+
+
+@app.get("/forecast")
+async def forecast(current_user = Depends(get_current_user)):
+    user_id = current_user.id
+    cache_key = f"forecast_{user_id}"
+    
+    cached_result = cache.get(cache_key)
+    if(cached_result):
+        print("Serving Forecast from Memory cache")
+        return cached_result
+    print("Cache Miss: Generating new forecast...")
+    
+    db_response = await supabase.table("store_settings").select("dna").eq("user_id",user_id).execute()
+    dna = db_response.data[0]['dna'] if db_response.data else{}
+    target_revenue = dna.get('targetRevenue',0)
+    
+    ninety_days_ago = (datetime.now() - timedelta(days=90)).isoformat()
+    order_response = await supabase.table("orders").select('*').eq("user_id",user_id).gte("created_at",ninety_days_ago).execute()
+    if not orders_response.data:
+        raise HTTPException(status_code=404, detail="No orders found for forecasting. Please sync your store with at least 14 days of data.")
+    
+    df = pd.DataFrame(order_response.data)
+    forecast_result = generate_30_day_forecast(df,float(target_revenue))
+    
+    if "error" in forecast_result:
+        raise HTTPException(status_code = 400,detail = forecast_result["error"])
+    cache.set(cache_key,forecast_result,ex=21600)
+    return forecast_result    
+    

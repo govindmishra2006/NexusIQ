@@ -14,6 +14,7 @@ import { AIBrainRow } from "./AIBrainRow";
 import { AnalyticsRow } from "./AnalyticsRow";
 import { supabase } from "../lib/supabase";
 import { useStoreDna } from "../store/useStoreDna";
+import {ForecastCard} from "./ForecastCard";
 
 // ==========================================
 // 1. THE SHOPIFY INTEGRATION UI PORTAL
@@ -265,6 +266,7 @@ export function Dashboard({ data }: { data: any }) {
           </div>
 
           <KPIRow data={data} />
+          <ForecastCard />
           <AIBrainRow data={data} />
           <AnalyticsRow data={data} />
 
